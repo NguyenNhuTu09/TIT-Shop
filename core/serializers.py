@@ -1,6 +1,7 @@
-# core/serializers.py
 from rest_framework import serializers
 from .models import Category, Product, Order, OrderItem
+from django.contrib.auth.models import User
+
 
 class CategorySerializer(serializers.ModelSerializer):
     class Meta:
@@ -8,7 +9,6 @@ class CategorySerializer(serializers.ModelSerializer):
         fields = ['id', 'name', 'slug']
 
 class ProductSerializer(serializers.ModelSerializer):
-    # Hiển thị tên category thay vì chỉ ID
     category_name = serializers.CharField(source='category.name', read_only=True)
 
     class Meta:
@@ -17,7 +17,6 @@ class ProductSerializer(serializers.ModelSerializer):
             'id', 'name', 'slug', 'description', 'price',
             'stock', 'image', 'is_available', 'category', 'category_name'
         ]
-        # category là trường write-only để client gửi ID lên
         extra_kwargs = {
             'category': {'write_only': True}
         }
@@ -40,3 +39,73 @@ class OrderSerializer(serializers.ModelSerializer):
             'id', 'user', 'first_name', 'last_name', 'email', 'address',
             'postal_code', 'city', 'created_at', 'paid', 'total_price', 'items'
         ]
+        
+
+class RegisterSerializer(serializers.ModelSerializer):
+    password = serializers.CharField(write_only=True, required=True, style={'input_type': 'password'})
+    
+    class Meta:
+        model = User
+        fields = ('username', 'password', 'email', 'first_name', 'last_name')
+
+    def create(self, validated_data):
+        user = User.objects.create_user(
+            username=validated_data['username'],
+            email=validated_data['email'],
+            first_name=validated_data.get('first_name', ''),
+            last_name=validated_data.get('last_name', '')
+        )
+        user.set_password(validated_data['password'])
+        user.save()
+        return user
+    
+    
+class CreateOrderItemSerializer(serializers.ModelSerializer):
+    product_id = serializers.IntegerField()
+
+    class Meta:
+        model = OrderItem
+        fields = ['product_id', 'quantity']
+
+# Serializer cho việc tạo đơn hàng chính
+class CreateOrderSerializer(serializers.ModelSerializer):
+    items = CreateOrderItemSerializer(many=True)
+
+    class Meta:
+        model = Order
+        fields = [
+            'first_name', 'last_name', 'email', 'address',
+            'postal_code', 'city', 'items'
+        ]
+
+    def create(self, validated_data):
+        from django.db import transaction
+        
+        items_data = validated_data.pop('items')
+        
+        with transaction.atomic():
+            order = Order.objects.create(**validated_data)
+            
+            total_price = 0
+            for item_data in items_data:
+                product = Product.objects.get(id=item_data['product_id'])
+                quantity = item_data['quantity']
+
+                if product.stock < quantity:
+                    raise serializers.ValidationError(f"Sản phẩm '{product.name}' không đủ số lượng tồn kho.")
+
+                item = OrderItem.objects.create(
+                    order=order,
+                    product=product,
+                    price=product.price,
+                    quantity=quantity
+                )
+                
+                total_price += item.get_cost()
+                product.stock -= quantity
+                product.save()
+
+            order.total_price = total_price
+            order.save()
+            
+        return order
