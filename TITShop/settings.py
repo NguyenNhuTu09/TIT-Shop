@@ -42,6 +42,7 @@ INSTALLED_APPS = [
 
     # Thư viện của bên thứ ba
     'rest_framework',
+    'rest_framework.authtoken',
     'corsheaders',
 
     # App của bạn
@@ -152,6 +153,8 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'rest_framework_simplejwt.authentication.JWTAuthentication',
+        'rest_framework.authentication.SessionAuthentication',
+        'rest_framework.authentication.TokenAuthentication',
     ),
     # Cấu hình thêm cho bộ lọc và tìm kiếm ở bước sau
     'DEFAULT_FILTER_BACKENDS': [

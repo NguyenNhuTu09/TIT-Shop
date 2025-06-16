@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Category, Product, Order, OrderItem
+from .models import Category, Product, Order, OrderItem, Cart, CartItem
 from django.contrib.auth.models import User
 
 
@@ -109,3 +109,22 @@ class CreateOrderSerializer(serializers.ModelSerializer):
             order.save()
             
         return order
+    
+    
+class CartItemSerializer(serializers.ModelSerializer):
+    product = ProductSerializer()
+
+    class Meta:
+        model = CartItem
+        fields = ['id', 'product', 'quantity', 'added_at', 'get_cost']
+
+class CartSerializer(serializers.ModelSerializer):
+    items = CartItemSerializer(many=True, read_only=True)
+    total = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Cart
+        fields = ['id', 'user', 'created_at', 'items', 'total']
+
+    def get_total(self, obj):
+        return sum(item.get_cost() for item in obj.items.all())

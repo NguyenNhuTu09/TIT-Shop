@@ -1,12 +1,25 @@
 from rest_framework import viewsets, permissions, generics
-from .models import Category, Product, Order
+from .models import Category, Product, Order, Cart, CartItem
 from .serializers import (CategorySerializer, ProductSerializer, 
                           OrderSerializer, RegisterSerializer, 
-                          CreateOrderSerializer)
+                          CreateOrderSerializer, CartSerializer,
+                          CartItemSerializer)
 from rest_framework import filters 
 from django_filters.rest_framework import DjangoFilterBackend
 from django.contrib.auth.models import User
+from rest_framework.decorators import action
+from rest_framework.authtoken.views import obtain_auth_token
+from rest_framework.permissions import AllowAny
+from rest_framework.response import Response
+from rest_framework import status
 
+
+class UserProfileView(generics.RetrieveAPIView):
+    serializer_class = RegisterSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_object(self):
+        return self.request.user
 
 class CategoryViewSet(viewsets.ReadOnlyModelViewSet):
     """
@@ -98,3 +111,65 @@ class CreateOrderView(generics.CreateAPIView):
     def perform_create(self, serializer):
         # Tự động gán user đang đăng nhập cho đơn hàng
         serializer.save(user=self.request.user)
+
+
+
+class CartViewSet(viewsets.ModelViewSet):
+    serializer_class = CartSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        return Cart.objects.filter(user=self.request.user)
+
+    def create(self, request, *args, **kwargs):
+        cart, created = Cart.objects.get_or_create(user=request.user)
+        serializer = self.get_serializer(cart)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=['post'])
+    def add_item(self, request, pk=None):
+        cart = self.get_object()
+        product_id = request.data.get('product_id')
+        quantity = request.data.get('quantity', 1)
+        product = Product.objects.get(id=product_id)
+
+        if product.stock < quantity:
+            raise serializers.ValidationError("Số lượng tồn kho không đủ.")
+
+        cart_item, created = CartItem.objects.get_or_create(cart=cart, product=product)
+        if not created:
+            cart_item.quantity += quantity
+        else:
+            cart_item.quantity = quantity
+        cart_item.save()
+        product.stock -= quantity
+        product.save()
+        serializer = CartSerializer(cart)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=['post'])
+    def update_item(self, request, pk=None):
+        cart = self.get_object()
+        item_id = request.data.get('item_id')
+        quantity = request.data.get('quantity')
+        cart_item = CartItem.objects.get(id=item_id, cart=cart)
+        if product.stock < quantity:
+            raise serializers.ValidationError("Số lượng tồn kho không đủ.")
+        cart_item.quantity = quantity
+        cart_item.save()
+        product.stock += cart_item.quantity - quantity  # Cập nhật lại stock
+        product.save()
+        serializer = CartSerializer(cart)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=['delete'])
+    def remove_item(self, request, pk=None):
+        cart = self.get_object()
+        item_id = request.data.get('item_id')
+        cart_item = CartItem.objects.get(id=item_id, cart=cart)
+        product = cart_item.product
+        product.stock += cart_item.quantity
+        product.save()
+        cart_item.delete()
+        serializer = CartSerializer(cart)
+        return Response(serializer.data)
