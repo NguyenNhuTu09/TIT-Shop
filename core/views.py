@@ -3,7 +3,8 @@ from .models import Category, Product, Order, Cart, CartItem
 from .serializers import (CategorySerializer, ProductSerializer, 
                           OrderSerializer, RegisterSerializer, 
                           CreateOrderSerializer, CartSerializer,
-                          CartItemSerializer)
+                          CartItemSerializer, ProductReviewSerializer,
+                          FavoriteSerializer, ProductReview, Favorite)
 from rest_framework import filters 
 from django_filters.rest_framework import DjangoFilterBackend
 from django.contrib.auth.models import User
@@ -12,6 +13,10 @@ from rest_framework.authtoken.views import obtain_auth_token
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework import status
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.filters import SearchFilter, OrderingFilter
+
 
 
 class UserProfileView(generics.RetrieveAPIView):
@@ -82,8 +87,10 @@ class OrderViewSet(viewsets.ReadOnlyModelViewSet):
     """
     API endpoint cho phép người dùng xem lại các đơn hàng của họ.
     """
+    queryset = Order.objects.all()
     serializer_class = OrderSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAuthenticated]  # ✅ đúng chỗ
+    filter_backends = [OrderingFilter, SearchFilter]  # nếu muốn lọc
 
     def get_queryset(self):
         """
@@ -115,8 +122,8 @@ class CreateOrderView(generics.CreateAPIView):
 
 
 class CartViewSet(viewsets.ModelViewSet):
-    serializer_class = CartSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAuthenticated]              
+    filter_backends = [SearchFilter, OrderingFilter]
 
     def get_queryset(self):
         return Cart.objects.filter(user=self.request.user)
@@ -147,20 +154,50 @@ class CartViewSet(viewsets.ModelViewSet):
         serializer = CartSerializer(cart)
         return Response(serializer.data)
 
+    # @action(detail=True, methods=['post'])
+    # def update_item(self, request, pk=None):
+    #     cart = self.get_object()
+    #     item_id = request.data.get('item_id')
+    #     quantity = request.data.get('quantity')
+    #     cart_item = CartItem.objects.get(id=item_id, cart=cart)
+    #     product = Product.objects.get(id=product_id)
+    #     if product.stock < quantity:
+    #         raise serializers.ValidationError("Số lượng tồn kho không đủ.")
+    #     cart_item.quantity = quantity
+    #     cart_item.save()
+    #     product.stock += cart_item.quantity - quantity  # Cập nhật lại stock
+    #     product.save()
+    #     serializer = CartSerializer(cart)
+    #     return Response(serializer.data)
+    
+    
     @action(detail=True, methods=['post'])
     def update_item(self, request, pk=None):
         cart = self.get_object()
         item_id = request.data.get('item_id')
-        quantity = request.data.get('quantity')
-        cart_item = CartItem.objects.get(id=item_id, cart=cart)
-        if product.stock < quantity:
-            raise serializers.ValidationError("Số lượng tồn kho không đủ.")
+        quantity = int(request.data.get('quantity', 1))
+
+        try:
+            cart_item = CartItem.objects.get(id=item_id, cart=cart)
+        except CartItem.DoesNotExist:
+            return Response({"error": "Không tìm thấy sản phẩm trong giỏ hàng."}, status=404)
+
+        product = cart_item.product
+
+        if product.stock + cart_item.quantity < quantity:
+            return Response({"error": "Số lượng tồn kho không đủ."}, status=400)
+
+        # Trả lại hàng cũ trước khi cập nhật (tránh mất stock)
+        product.stock += cart_item.quantity
+        product.stock -= quantity
+        product.save()
+
         cart_item.quantity = quantity
         cart_item.save()
-        product.stock += cart_item.quantity - quantity  # Cập nhật lại stock
-        product.save()
+
         serializer = CartSerializer(cart)
         return Response(serializer.data)
+
 
     @action(detail=True, methods=['delete'])
     def remove_item(self, request, pk=None):
@@ -173,3 +210,38 @@ class CartViewSet(viewsets.ModelViewSet):
         cart_item.delete()
         serializer = CartSerializer(cart)
         return Response(serializer.data)
+    
+class ProductReviewViewSet(viewsets.ModelViewSet):
+    serializer_class = ProductReviewSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        return ProductReview.objects.filter(user=self.request.user)
+
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)
+
+class FavoriteViewSet(viewsets.ModelViewSet):
+    serializer_class = FavoriteSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        return Favorite.objects.filter(user=self.request.user)
+
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)
+
+@api_view(['PATCH'])
+@permission_classes([permissions.IsAuthenticated])
+def update_order_status(request, pk):
+    order = get_object_or_404(Order, pk=pk, user=request.user)
+    status = request.data.get('status')
+    if status in ['pending', 'shipped', 'delivered', 'cancelled']:
+        order.status = status
+        order.save()
+        serializer = OrderSerializer(order)
+        return Response(serializer.data)
+    return Response({'error': 'Invalid status'}, status=status.HTTP_400_BAD_REQUEST)
+
+# Cập nhật ProductViewSet để lọc theo giá và tồn kho
+ProductViewSet.filterset_fields += ['price', 'stock']

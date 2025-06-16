@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Category, Product, Order, OrderItem, Cart, CartItem
+from .models import Category, Product, Order, OrderItem, Cart, CartItem, ProductReview, Favorite
 from django.contrib.auth.models import User
 
 
@@ -18,7 +18,7 @@ class ProductSerializer(serializers.ModelSerializer):
             'stock', 'image', 'is_available', 'category', 'category_name'
         ]
         extra_kwargs = {
-            'category': {'write_only': True}
+            'category': {'required': True, 'queryset': Category.objects.all()}
         }
 
 class OrderItemSerializer(serializers.ModelSerializer):
@@ -31,13 +31,13 @@ class OrderItemSerializer(serializers.ModelSerializer):
 
 class OrderSerializer(serializers.ModelSerializer):
     items = OrderItemSerializer(many=True, read_only=True)
-    user = serializers.StringRelatedField() # Hiển thị username
+    user = serializers.StringRelatedField()
 
     class Meta:
         model = Order
         fields = [
             'id', 'user', 'first_name', 'last_name', 'email', 'address',
-            'postal_code', 'city', 'created_at', 'paid', 'total_price', 'items'
+            'postal_code', 'city', 'created_at', 'paid', 'total_price', 'items', 'status'
         ]
         
 
@@ -128,3 +128,18 @@ class CartSerializer(serializers.ModelSerializer):
 
     def get_total(self, obj):
         return sum(item.get_cost() for item in obj.items.all())
+    
+    
+class ProductReviewSerializer(serializers.ModelSerializer):
+    user = serializers.StringRelatedField(read_only=True)
+
+    class Meta:
+        model = ProductReview
+        fields = ['id', 'user', 'rating', 'comment', 'created_at']
+
+class FavoriteSerializer(serializers.ModelSerializer):
+    product = ProductSerializer(read_only=True)
+
+    class Meta:
+        model = Favorite
+        fields = ['id', 'product', 'added_at']
